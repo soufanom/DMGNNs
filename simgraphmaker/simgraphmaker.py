@@ -1,179 +1,221 @@
 import torch
 from rdkit import Chem
+from rdkit.Chem import AllChem, Descriptors, DataStructs
 import pandas as pd
 import numpy as np
+import random
+import pickle
+import os
+from rdkit.DataStructs import ExplicitBitVect
 
-
-# Utility functions to featurize atoms and bonds
-def atom_features(atom):
-    """Generate atom features: atomic number, degree, total valence"""
-    return np.array([
-        atom.GetAtomicNum(),
-        atom.GetDegree(),
-        atom.GetTotalValence(),
-    ], dtype=np.float32)
-
-
-def bond_features(bond):
-    """Generate bond features: bond type, is conjugated"""
-    bt = bond.GetBondType()
-    return np.array([
-        bt == Chem.rdchem.BondType.SINGLE,
-        bt == Chem.rdchem.BondType.DOUBLE,
-        bt == Chem.rdchem.BondType.TRIPLE,
-        bt == Chem.rdchem.BondType.AROMATIC,
-        bond.GetIsConjugated(),
-    ], dtype=np.float32)
-
-
-# Function to convert protein sequences to SMILES and then to a molecular graph
-def protein_to_smiles(protein_sequence):
+def convert_to_explicit_bitvect(ecfp):
+    """ Attempt to convert a numpy array back to an RDKit ExplicitBitVect. """
     try:
-        # Ensure the sequence is a string
-        if not isinstance(protein_sequence, str):
-            protein_sequence = str(protein_sequence)
-
-        # Convert protein sequence to RDKit molecule
-        mol = Chem.MolFromSequence(protein_sequence)
-        if mol is None:
-            raise ValueError(f"Failed to create mol object from protein sequence: {protein_sequence}")
-
-        # Convert molecule to SMILES
-        smiles = Chem.MolToSmiles(mol)
-        return smiles
-
+        if isinstance(ecfp, np.ndarray):
+            bitvect = ExplicitBitVect(len(ecfp))
+            for i, bit in enumerate(ecfp):
+                if bit:
+                    bitvect.SetBit(i)
+            return bitvect
+        return ecfp
     except Exception as e:
-        print(f"Error processing protein sequence: {protein_sequence}. Error: {e}")
+        print(f"Conversion to ExplicitBitVect failed: {e}")
+        return None
+
+# Function to generate ECFP (Morgan Fingerprints) for a molecule
+def generate_ecfp(mol, radius=2, n_bits=1024):
+    if mol is None:
+        return None
+    ecfp = AllChem.GetMorganFingerprintAsBitVect(mol, radius, nBits=n_bits)
+    return np.array(ecfp)
+
+
+# Function to generate an expanded set of chemical descriptors for a molecule
+def generate_chemical_descriptors(mol):
+    if mol is None:
+        return None
+    try:
+        descriptors = np.array([
+            Descriptors.MolWt(mol),                # Molecular weight
+            Descriptors.MolLogP(mol),              # LogP (octanol-water partition coefficient)
+            Descriptors.NumHDonors(mol),           # Number of hydrogen bond donors
+            Descriptors.NumHAcceptors(mol),        # Number of hydrogen bond acceptors
+            Descriptors.TPSA(mol),                 # Topological Polar Surface Area
+            Descriptors.RingCount(mol),            # Number of rings
+            Descriptors.FractionCSP3(mol),         # Fraction of sp3 hybridized carbons
+            Descriptors.HeavyAtomCount(mol),       # Number of heavy atoms
+            Descriptors.NHOHCount(mol),            # Number of NH or OH groups
+            Descriptors.NOCount(mol),              # Number of nitrogen or oxygen atoms
+            Descriptors.NumRotatableBonds(mol),    # Number of rotatable bonds
+            Descriptors.MaxPartialCharge(mol),     # Maximum partial charge on any atom
+            Descriptors.MinPartialCharge(mol),     # Minimum partial charge on any atom
+            Descriptors.MaxAbsPartialCharge(mol),  # Maximum absolute partial charge on any atom
+            Descriptors.MinAbsPartialCharge(mol),  # Minimum absolute partial charge on any atom
+        ])
+        # Clip the descriptor values to avoid overflows
+        descriptors = np.clip(descriptors, -1e5, 1e5)
+        return descriptors
+    except Exception as e:
+        print(f"Error calculating descriptors: {e}")
         return None
 
 
-# Function to find the maximum number of atoms and bonds for chemicals only
-def find_max_atoms_bonds(smiles_list):
-    max_atoms = 0
-    max_bonds = 0
-    for smiles in smiles_list:
-        mol = Chem.MolFromSmiles(smiles)
-        if mol is not None:
-            num_atoms = len(mol.GetAtoms())
-            num_bonds = len(mol.GetBonds())
-            if num_atoms > max_atoms:
-                max_atoms = num_atoms
-            if num_bonds > max_bonds:
-                max_bonds = num_bonds
-    return max_atoms, max_bonds
+# Function to combine ECFP features and chemical descriptors
+def generate_combined_features(mol):
+    ecfp = generate_ecfp(mol)
+    descriptors = generate_chemical_descriptors(mol)
+    if ecfp is None or descriptors is None:
+        return None
+    return (ecfp, descriptors)  # Ensure this is always a tuple with exactly two items
+
+# Function to convert SMILES or protein sequence to RDKit molecule with error handling
+def to_mol(smiles_or_sequence, is_protein=False):
+    try:
+        if pd.isna(smiles_or_sequence):
+            raise ValueError(f"Invalid input: {smiles_or_sequence} (NaN detected)")
+
+        if is_protein:
+            if not isinstance(smiles_or_sequence, str):
+                raise ValueError(f"Invalid protein sequence: {smiles_or_sequence}")
+            mol = Chem.MolFromSequence(smiles_or_sequence)
+        else:
+            mol = Chem.MolFromSmiles(smiles_or_sequence)
+
+        if mol is None:
+            raise ValueError(f"Failed to create mol object from input: {smiles_or_sequence}")
+
+        return mol
+    except Exception as e:
+        print(f"Error processing input: {smiles_or_sequence}. Error: {e}")
+        return None
 
 
-# Function to convert SMILES to a molecular graph with dynamic padding
-def smiles_to_graph(smiles, max_atoms, max_bonds):
-    mol = Chem.MolFromSmiles(smiles)
-    if mol is None:
-        raise ValueError(f"Failed to parse SMILES: {smiles}")
+def compute_combined_similarity(features1, features2, weight_tanimoto=0.5, weight_distance=0.5):
+    if features1 is None or features2 is None:
+        return None
 
-    atoms = mol.GetAtoms()
-    bonds = mol.GetBonds()
+    ecfp1, desc1 = features1
+    ecfp2, desc2 = features2
 
-    atom_features_list = [atom_features(atom) for atom in atoms]
-    bond_features_list = [bond_features(bond) for bond in bonds]
+    # Ensure the ECFP vectors are RDKit ExplicitBitVect objects
+    try:
+        ecfp1 = convert_to_explicit_bitvect(ecfp1)
+        ecfp2 = convert_to_explicit_bitvect(ecfp2)
 
-    # Pad atom and bond features to the maximum length
-    atom_features_padded = np.zeros((max_atoms, atom_features_list[0].shape[0]), dtype=np.float32)
-    bond_features_padded = np.zeros((max_bonds, bond_features_list[0].shape[0]), dtype=np.float32)
+        if not isinstance(ecfp1, ExplicitBitVect) or not isinstance(ecfp2, ExplicitBitVect):
+            raise TypeError("ECFP features must be RDKit ExplicitBitVect objects.")
 
-    atom_features_padded[:len(atom_features_list), :] = atom_features_list
-    bond_features_padded[:len(bond_features_list), :] = bond_features_list
+        # Compute Tanimoto similarity for the ECFP fingerprints
+        tanimoto_sim = DataStructs.TanimotoSimilarity(ecfp1, ecfp2)
 
-    # For edge_index, we don't pad but instead handle it separately
-    edge_index = []
-    for bond in bonds:
-        i = bond.GetBeginAtomIdx()
-        j = bond.GetEndAtomIdx()
-        edge_index.append([i, j])
-        edge_index.append([j, i])
+        # Compute Euclidean distance for the chemical descriptors
+        euclidean_dist = np.linalg.norm(desc1 - desc2)
 
-    return torch.tensor(atom_features_padded, dtype=torch.float), torch.tensor(edge_index,
-                                                                               dtype=torch.long).t().contiguous(), torch.tensor(
-        bond_features_padded, dtype=torch.float)
+        # Normalize the Euclidean distance to a similarity measure [0, 1]
+        normalized_dist = 1 / (1 + euclidean_dist)
 
+        # Combine the two metrics using a weighted average
+        combined_similarity = weight_tanimoto * tanimoto_sim + weight_distance * normalized_dist
+        return combined_similarity
+
+    except TypeError as e:
+        print(f"Error in computing similarity: {e}")
+        return None
+
+def compute_random_similarity(features_dict, subset_size=100):
+    keys = list(features_dict.keys())
+    similarities = {}
+    for key in keys:
+        random_subset = random.sample(keys, min(subset_size, len(keys)))
+        for other_key in random_subset:
+            if key != other_key:
+                similarity = compute_combined_similarity(features_dict[key], features_dict[other_key])
+                if similarity is not None:
+                    similarities[(key, other_key)] = similarity
+                else:
+                    print(f"Skipping similarity computation between {key} and {other_key} due to an error.")
+        print(f"Computed similarities for {key}")
+    return similarities
 
 # Function to generate and store features for chemicals and proteins
-def generate_features(file_path):
+def generate_features(file_path, subset_size=100, features_pickle='features.pkl'):
+    # Check if the features have been previously generated and saved in a pickle file
+    if os.path.exists(features_pickle):
+        with open(features_pickle, 'rb') as f:
+            saved_features = pickle.load(f)
+        drug_features = saved_features.get('drug_features', {})
+        protein_features = saved_features.get('protein_features', {})
+        print(f"Loaded previously generated features from {features_pickle}")
+    else:
+        drug_features = {}
+        protein_features = {}
+
     data = pd.read_csv(file_path)
     unique_drugs = data['chemical'].unique()
     unique_proteins = data['protein'].unique()
 
-    # Convert protein sequences to SMILES strings
-    protein_smiles = [protein_to_smiles(protein) for protein in unique_proteins]
-    protein_smiles = [smiles for smiles in protein_smiles if smiles is not None]  # Filter out None values
-
-    # Combine drug and protein SMILES for finding max atoms and bonds
-    all_smiles = list(unique_drugs) + protein_smiles
-
-    # Find the maximum number of atoms and bonds in the combined dataset
-    max_atoms, max_bonds = find_max_atoms_bonds(all_smiles)
-
-    # Create dictionaries to store features
-    drug_features = {}
-    protein_features = {}
-
-    # Generate features for each unique drug (chemical)
+    # Generate and store features for each unique drug (chemical)
     for drug in unique_drugs:
-        atom_features, edge_index, edge_attr = smiles_to_graph(drug, max_atoms, max_bonds)
-        features = torch.cat([atom_features.mean(dim=0), edge_attr.mean(dim=0)], dim=0).numpy()
-        drug_features[drug] = features
+        if drug not in drug_features:  # Only generate if not already saved
+            mol = to_mol(drug, is_protein=False)
+            if mol is not None:
+                features = generate_combined_features(mol)
+                if features is not None:
+                    drug_features[drug] = features
+                else:
+                    print(f"Skipping drug due to invalid features: {drug}")
 
-    # Generate features for each unique protein (using SMILES converted from sequence)
-    for protein, smiles in zip(unique_proteins, protein_smiles):
-        atom_features, edge_index, edge_attr = smiles_to_graph(smiles, max_atoms, max_bonds)
-        features = torch.cat([atom_features.mean(dim=0), edge_attr.mean(dim=0)], dim=0).numpy()
-        protein_features[protein] = features
+    # Generate and store features for each unique protein
+    for protein in unique_proteins:
+        if protein not in protein_features:  # Only generate if not already saved
+            mol = to_mol(protein, is_protein=True)
+            if mol is not None:
+                features = generate_combined_features(mol)
+                if features is not None:
+                    protein_features[protein] = features
+                else:
+                    print(f"Skipping protein due to invalid features: {protein}")
 
-    return drug_features, protein_features
+    # Save the generated features to a pickle file
+    with open(features_pickle, 'wb') as f:
+        pickle.dump({'drug_features': drug_features, 'protein_features': protein_features}, f)
+    print(f"Saved generated features to {features_pickle}")
 
-# Example usage
-file_path = '../Data-preparation/BindingDB-processed/output_data.txt'  # Replace with the path to your input file
-drug_features, protein_features = generate_features(file_path)
+    # Compute random similarities for drugs and proteins
+    drug_similarities = compute_random_similarity(drug_features, subset_size)
+    protein_similarities = compute_random_similarity(protein_features, subset_size)
 
+    return drug_similarities, protein_similarities
 
-# Function to calculate similarity between feature vectors using batch processing
-def batch_compute_similarity(features, batch_size=1000):
-    num_features = len(features)
-    feature_matrix = np.array(list(features.values()))
-    similarity_scores = []
-
-    for i in range(0, num_features, batch_size):
-        batch_features = feature_matrix[i:i + batch_size]
-        sim_matrix = np.dot(batch_features, feature_matrix.T) / (
-                np.linalg.norm(batch_features, axis=1, keepdims=True) *
-                np.linalg.norm(feature_matrix, axis=1, keepdims=True).T
-        )
-
-        for j in range(batch_features.shape[0]):
-            for k in range(i + j + 1, num_features):
-                similarity_scores.append((i + j, k, sim_matrix[j, k - i]))
-
-    return similarity_scores
-
-
-# Function to generate and save similarity files without applying any threshold
-def generate_similarity_files(drug_features, protein_features, drug_output_file, protein_output_file, batch_size=1000):
-    # Generate drug-drug similarity file
+# Function to save similarities to files
+def generate_similarity_files(drug_similarities, protein_similarities, drug_output_file, protein_output_file):
+    # Save drug-drug similarities to a file
     with open(drug_output_file, 'w') as f:
         f.write('drug1,drug2,similarity_score\n')
-        drugs = list(drug_features.keys())
-        drug_similarities = batch_compute_similarity(drug_features, batch_size)
-        for idx1, idx2, sim in drug_similarities:
-            f.write(f'{drugs[idx1]},{drugs[idx2]},{sim}\n')
+        for (drug1, drug2), similarity in drug_similarities.items():
+            f.write(f'{drug1},{drug2},{similarity}\n')
 
-    # Generate protein-protein similarity file
+    # Save protein-protein similarities to a file
     with open(protein_output_file, 'w') as f:
         f.write('protein1,protein2,similarity_score\n')
-        proteins = list(protein_features.keys())
-        protein_similarities = batch_compute_similarity(protein_features, batch_size)
-        for idx1, idx2, sim in protein_similarities:
-            f.write(f'{proteins[idx1]},{proteins[idx2]},{sim}\n')
+        for (protein1, protein2), similarity in protein_similarities.items():
+            f.write(f'{protein1},{protein2},{similarity}\n')
+
 
 # Example usage
-output_path = "../Data-preparation/SimilarityGraphs/"
-drug_output_file = output_path+'drug_similarity.csv'
-protein_output_file = output_path+'protein_similarity.csv'
-generate_similarity_files(drug_features, protein_features, drug_output_file, protein_output_file, batch_size=1000)
+if __name__ == "__main__":
+    input_path = "../Data/BindingDB-processed/"
+    file_path = input_path+'bindingdb_ic50_data.txt'  # Replace with the path to your input file
+    subset_size = 100  # Number of random molecules to compare against
+    features_pickle = 'features.pkl'
+
+    # Generate features and compute similarities
+    drug_similarities, protein_similarities = generate_features(file_path, subset_size, features_pickle)
+
+    # Save the similarities to files
+    output_path = "../Data/SimilarityGraphs/"
+    drug_output_file = output_path + 'drug_similarity.csv'
+    protein_output_file = output_path +'protein_similarity.csv'
+    generate_similarity_files(drug_similarities, protein_similarities, drug_output_file, protein_output_file)
+
+    print("Similarity computation and file generation completed.")

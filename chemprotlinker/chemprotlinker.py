@@ -74,7 +74,7 @@ def build_smiles_dict(chem_file, repr_file):
     return smiles_dict
 
 # Build the SMILES dictionary
-input_path = "../Data-preparation/BindingDB/"
+input_path = "../Data/BindingDB/"
 chem_file = input_path+'chem-1.txt'
 repr_file = input_path+'chem-repr-1.repr'
 smiles_dict = build_smiles_dict(chem_file, repr_file)
@@ -90,8 +90,8 @@ file_list = [
 ]
 
 # Specify the output file
-output_path = "../Data-preparation/BindingDB-processed/"
-output_file = output_path+'output_data.txt'
+output_path = "../Data/BindingDB-processed/"
+output_file = output_path+'bindingdb_ic50_data.txt'
 
 # Run the processing function using the SMILES dictionary
 process_files_with_smiles_dict(input_path, file_list, output_file, smiles_dict)
