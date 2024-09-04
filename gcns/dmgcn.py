@@ -24,29 +24,26 @@ def set_seed(seed):
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
 
-class GCN(nn.Module):
-    def __init__(self, num_node_features, hidden_dim=128, num_layers=5, dropout_rate=0.5):
-        super(GCN, self).__init__()
 
+class GCN(nn.Module):
+    def __init__(self, num_node_features, hidden_dims=[128, 256, 128, 64, 32], dropout_rate=0.5):
+        super(GCN, self).__init__()
+        
         self.convs = nn.ModuleList()
         self.bns = nn.ModuleList()  # Batch normalization layers
         self.dropout = nn.Dropout(p=dropout_rate)  # Dropout layer
-
+        
         # First GCN layer
-        self.convs.append(GCNConv(num_node_features, hidden_dim))
-        self.bns.append(nn.BatchNorm1d(hidden_dim))
+        self.convs.append(GCNConv(num_node_features, hidden_dims[0]))
+        self.bns.append(nn.BatchNorm1d(hidden_dims[0]))
 
         # Hidden GCN layers
-        for _ in range(num_layers - 2):
-            self.convs.append(GCNConv(hidden_dim, hidden_dim))
-            self.bns.append(nn.BatchNorm1d(hidden_dim))
-
-        # Last GCN layer
-        self.convs.append(GCNConv(hidden_dim, hidden_dim))
-        self.bns.append(nn.BatchNorm1d(hidden_dim))
+        for i in range(1, len(hidden_dims)):
+            self.convs.append(GCNConv(hidden_dims[i-1], hidden_dims[i]))
+            self.bns.append(nn.BatchNorm1d(hidden_dims[i]))
 
         # Fully connected layer
-        self.fc = nn.Linear(hidden_dim, 1)
+        self.fc = nn.Linear(hidden_dims[-1], 1)
 
     def forward(self, x, edge_index, edge_weight=None):
         for conv, bn in zip(self.convs, self.bns):
@@ -251,8 +248,8 @@ if __name__ == "__main__":
     # Initialize GCN models
     seed = 42
     set_seed(seed)
-    gcn_embeddings = GCN(num_node_features=data_embeddings.x.size(1), hidden_dim=128, num_layers=5)
-    gcn_original = GCN(num_node_features=data_original.x.size(1), hidden_dim=128, num_layers=5)
+    gcn_embeddings = GCN(num_node_features=data_embeddings.x.size(1))
+    gcn_original = GCN(num_node_features=data_original.x.size(1))
 
     # Train GCN models
     print("Training GCN with embeddings...")
@@ -286,8 +283,8 @@ if __name__ == "__main__":
 
     # Initialize GCN models for normalized data
     set_seed(seed)
-    gcn_norm_embedded = GCN(num_node_features=data_normalized_embeddings.x.size(1), hidden_dim=128, num_layers=5)
-    gcn_norm_original = GCN(num_node_features=data_normalized_original.x.size(1), hidden_dim=128, num_layers=5)
+    gcn_norm_embedded = GCN(num_node_features=data_normalized_embeddings.x.size(1))
+    gcn_norm_original = GCN(num_node_features=data_normalized_original.x.size(1))
 
     # Train GCN models on normalized data
     print("Training GCN with normalized embeddings...")
