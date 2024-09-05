@@ -195,17 +195,33 @@ def normalize_features(features):
 def evaluate_gcn(gcn, data, labels):
     gcn.eval()
     with torch.no_grad():
+        # Forward pass: Get the predicted similarity scores
         out = gcn(data.x, data.edge_index, data.edge_attr)
         out = out.view(-1)  # Flatten output
-        predictions = (out >= 0.5).float()
-        correct = (predictions == labels).float().sum()
-        accuracy = correct / labels.size(0)
-        precision = torch.sum(predictions * labels) / torch.sum(predictions)
-        recall = torch.sum(predictions * labels) / torch.sum(labels)
+
+        # Convert the raw output to probabilities using sigmoid
+        predicted_probabilities = torch.sigmoid(out).detach().cpu().numpy()
+
+        # Threshold at 0.5 for binary classification
+        predictions = (predicted_probabilities >= 0.5).astype(float)
+
+        # Convert labels to numpy
+        labels_np = labels.detach().cpu().numpy()
+
+        # Accuracy metrics
+        correct = (predictions == labels_np).sum()
+        accuracy = correct / labels_np.size
+        precision = (predictions * labels_np).sum() / predictions.sum()
+        recall = (predictions * labels_np).sum() / labels_np.sum()
         f1_score = 2 * precision * recall / (precision + recall + 1e-10)
-        auc = 0.5  # Placeholder for AUC calculation, you can compute AUC using sklearn's roc_auc_score
-        print(f"Precision: {precision.item():.4f}, Recall: {recall.item():.4f}, F1 Score: {f1_score.item():.4f}, AUC: {auc:.4f}")
-    return precision.item(), recall.item(), f1_score.item(), auc
+
+        # AUC calculation using roc_auc_score from sklearn
+        auc = roc_auc_score(labels_np, predicted_probabilities)
+
+        # Print evaluation metrics
+        print(f"Precision: {precision:.4f}, Recall: {recall:.4f}, F1 Score: {f1_score:.4f}, AUC: {auc:.4f}")
+
+    return precision, recall, f1_score, auc
 
 
 # Main script
