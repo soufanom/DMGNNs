@@ -203,7 +203,8 @@ def evaluate_gcn(gcn, data, labels):
         predicted_probabilities = torch.sigmoid(out).detach().cpu().numpy()
 
         # Threshold at 0.5 for binary classification
-        predictions = (predicted_probabilities >= 0.5).astype(float)
+        # predictions = (predicted_probabilities >= 0.5).astype(float)
+        predictions = (out >= 0.5).float()
 
         # Convert labels to numpy
         labels_np = labels.detach().cpu().numpy()
