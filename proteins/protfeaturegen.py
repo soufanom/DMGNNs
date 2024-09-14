@@ -2,10 +2,18 @@ import numpy as np
 from collections import Counter
 from sklearn.preprocessing import OneHotEncoder
 from sklearn.preprocessing import MinMaxScaler
+import hashlib
+
 
 class ProteinFeatureGenerator:
-    def __init__(self):
+    def __init__(self, output_size=500):
         self.amino_acids = list("ACDEFGHIKLMNPQRSTVWY")  # Standard amino acids
+        self.output_size = output_size  # Desired output size for hashed features
+
+    def clean_sequence(self, protein_sequence):
+        """ Remove non-standard amino acids from the sequence. """
+        # Filter out any amino acids that are not in the standard list
+        return ''.join([aa for aa in protein_sequence if aa in self.amino_acids])
 
     def generate_aac_features(self, protein_sequence):
         """ Generate amino acid composition (AAC) features for a protein sequence. """
@@ -60,21 +68,40 @@ class ProteinFeatureGenerator:
         return avg_properties
 
     def generate_onehot_features(self, protein_sequence):
-        """ Generate one-hot encoding features for a protein sequence. """
+        """ Generate one-hot encoding features for a protein sequence without truncation or padding. """
         encoder = OneHotEncoder(categories=[self.amino_acids], sparse_output=False)
+
         protein_array = np.array(list(protein_sequence)).reshape(-1, 1)
         one_hot_encoded = encoder.fit_transform(protein_array)
+
         return one_hot_encoded.flatten()
 
+    def hash_features(self, one_hot_encoded):
+        """ Map one-hot encoded features to a fixed output size using a hashing trick. """
+        # Initialize a fixed-size output vector
+        hashed_features = np.zeros(self.output_size)
+
+        # Hash each index of the one-hot vector and accumulate values in the output vector
+        for i, value in enumerate(one_hot_encoded):
+            if value != 0:
+                # Hash the index to get a fixed index in the output vector
+                hash_idx = int(hashlib.md5(str(i).encode()).hexdigest(), 16) % self.output_size
+                hashed_features[hash_idx] += value  # Accumulate the values in the hashed index
+
+        return hashed_features
+
     def generate_combined_features(self, protein_sequence):
-        """ Generates a combined feature vector for a protein sequence using multiple methods:
-            - One-hot encoding
-            - Amino acid composition (AAC)
-            - Average physicochemical properties
+        """Generates a tuple of (ecfp, descriptors) for a protein sequence:
+           - ecfp: Hashed one-hot encoded features.
+           - descriptors: Combined AAC and physicochemical features.
         """
         try:
-            # One-hot encoding
+            # Clean the sequence to remove non-standard amino acids
+            protein_sequence = self.clean_sequence(protein_sequence)
+
+            # One-hot encoding and hashing it to get ECFP-like features
             one_hot_encoded = self.generate_onehot_features(protein_sequence)
+            ecfp = self.hash_features(one_hot_encoded)  # ECFP-like hashed features
 
             # Amino acid composition (AAC)
             aac_features = self.generate_aac_features(protein_sequence)
@@ -82,11 +109,12 @@ class ProteinFeatureGenerator:
             # Physicochemical properties
             physicochemical_features = self.generate_physicochemical_features(protein_sequence)
 
-            # Concatenate all features into a single combined feature vector
-            combined_features = np.concatenate([one_hot_encoded, aac_features, physicochemical_features])
+            # Combine AAC and physicochemical features into a single descriptor vector
+            descriptors = np.concatenate([aac_features, physicochemical_features])
 
-            return combined_features
+            # Return the tuple (ecfp, descriptors)
+            return ecfp, descriptors
 
         except Exception as e:
             print(f"Error generating combined features for protein: {e}")
-            return None
+            return None, None

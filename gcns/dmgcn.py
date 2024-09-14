@@ -10,6 +10,8 @@ from sklearn.metrics import precision_score, recall_score, f1_score, roc_auc_sco
 from sklearn.model_selection import train_test_split
 import torch.nn.functional as F
 from sklearn.preprocessing import MinMaxScaler
+from sklearn.decomposition import PCA
+from sklearn.impute import SimpleImputer
 
 # Function to set the seed for reproducibility
 def set_seed(seed):
@@ -90,7 +92,7 @@ def shuffle_and_split_data(file_path, seed=42, test_size=0.2):
 # Load embeddings
 def load_embeddings(embedding_file):
     with open(embedding_file, 'rb') as f:
-        embeddings = pickle.load(f)
+        embeddings = pickle.load(f, encoding='latin1')
     return embeddings
 
 
@@ -169,6 +171,52 @@ def build_graph(df, drug_features, protein_features, is_embedding=False):
 
     return Data(x=node_features_tensor, edge_index=edge_index_tensor, edge_attr=edge_weight_tensor), labels_tensor
 
+
+# Function to handle NaN values by imputing the mean
+def handle_nan_values(matrix):
+    imputer = SimpleImputer(strategy='mean')
+    return imputer.fit_transform(matrix)
+
+
+# Convert the feature dictionary to two separate matrices: one for ecfp and one for desc
+def dict_to_matrix_separate(feature_dict):
+    keys = list(feature_dict.keys())
+    ecfp_matrix = []
+    desc_matrix = []
+
+    for key in keys:
+        if isinstance(feature_dict[key], tuple):  # If the feature is a tuple, split into ecfp and desc
+            ecfp, desc = feature_dict[key]
+            ecfp_matrix.append(ecfp)
+            desc_matrix.append(desc)
+
+    return np.vstack(ecfp_matrix), np.vstack(desc_matrix), keys
+
+
+# Convert the reduced matrices back to a dictionary with tuple (reduced_ecfp, reduced_desc)
+def matrix_to_dict_separate(reduced_ecfp_matrix, reduced_desc_matrix, keys):
+    reduced_dict = {key: (reduced_ecfp_matrix[i], reduced_desc_matrix[i]) for i, key in enumerate(keys)}
+    return reduced_dict
+
+
+# Apply PCA separately to ecfp and desc, handling NaN values
+def apply_pca_to_dict_separate(feature_dict, n_components=128):
+    ecfp_matrix, desc_matrix, keys = dict_to_matrix_separate(feature_dict)
+
+    # Handle NaN values
+    ecfp_matrix = handle_nan_values(ecfp_matrix)
+    desc_matrix = handle_nan_values(desc_matrix)
+
+    # Apply PCA separately to ecfp and desc
+    pca_ecfp = PCA(n_components=n_components)
+
+    reduced_ecfp_matrix = pca_ecfp.fit_transform(ecfp_matrix)
+
+    # Convert the reduced matrices back into a dictionary with tuple (ecfp, desc)
+    reduced_dict = matrix_to_dict_separate(reduced_ecfp_matrix, desc_matrix, keys)
+
+    return reduced_dict
+
 def normalize_features(features):
     scaler = MinMaxScaler()
     normalized_features = {}
@@ -229,9 +277,9 @@ def evaluate_gcn(gcn, data, labels):
 if __name__ == "__main__":
     # File paths
     data_file = '/home/o.soufan/DMGNNs/Data/BindingDB-processed/bindingdb_ic50_data.txt'
-    drug_embedding_file = 'drug_embeddings.pkl'
-    protein_embedding_file = 'protein_embeddings.pkl'
-    feature_file = '/home/o.soufan/DMGNNs/simgraphmaker/features.pkl'
+    drug_embedding_file = 'drug_embeddings_prot.pkl'
+    protein_embedding_file = 'protein_embeddings_prot.pkl'
+    feature_file = '/home/o.soufan/DMGNNs/simgraphmaker/features_prot.pkl'
 
     # Shuffle and split the data
     train_df, test_df = shuffle_and_split_data(data_file)
@@ -240,6 +288,10 @@ if __name__ == "__main__":
     drug_embeddings = load_embeddings(drug_embedding_file)
     protein_embeddings = load_embeddings(protein_embedding_file)
     drug_features, protein_features = load_original_features(feature_file)
+
+    # Apply PCA to reduce original features to 128 dimensions for both ecfp and desc
+    drug_features = apply_pca_to_dict_separate(drug_features, n_components=113)
+    protein_features = apply_pca_to_dict_separate(protein_features, n_components=105)
 
     # Determine the size of the node features
     embedding_feature_size = next(iter(drug_embeddings.values())).shape[0]

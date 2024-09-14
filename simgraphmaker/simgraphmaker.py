@@ -122,7 +122,7 @@ def compute_combined_similarity(features1, features2, weight_tanimoto=0.5, weigh
         print(f"Error in computing similarity: {e}")
         return None
 
-def compute_random_similarity(features_dict, subset_size=100):
+def compute_random_similarity(features_dict, subset_size=200):
     keys = list(features_dict.keys())
     similarities = {}
     for key in keys:
@@ -138,7 +138,7 @@ def compute_random_similarity(features_dict, subset_size=100):
     return similarities
 
 # Function to generate and store features for chemicals and proteins
-def generate_features(file_path, subset_size=100, features_pickle='features.pkl'):
+def generate_features(file_path, subset_size=200, features_pickle='features.pkl'):
     # Check if the features have been previously generated and saved in a pickle file
     if os.path.exists(features_pickle):
         with open(features_pickle, 'rb') as f:
@@ -206,7 +206,7 @@ def generate_similarity_files(drug_similarities, protein_similarities, drug_outp
 if __name__ == "__main__":
     input_path = "../Data/BindingDB-processed/"
     file_path = input_path+'bindingdb_ic50_data.txt'  # Replace with the path to your input file
-    subset_size = 100  # Number of random molecules to compare against
+    subset_size = 200  # Number of random molecules to compare against
     features_pickle = 'features.pkl'
 
     # Generate features and compute similarities
@@ -214,8 +214,8 @@ if __name__ == "__main__":
 
     # Save the similarities to files
     output_path = "../Data/SimilarityGraphs/"
-    drug_output_file = output_path + 'drug_similarity.csv'
-    protein_output_file = output_path +'protein_similarity.csv'
+    drug_output_file = output_path + 'drug_similarity_3.csv'
+    protein_output_file = output_path +'protein_similarity_3.csv'
     generate_similarity_files(drug_similarities, protein_similarities, drug_output_file, protein_output_file)
 
     print("Similarity computation and file generation completed.")

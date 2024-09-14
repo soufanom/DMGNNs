@@ -31,15 +31,12 @@ class ImprovedGCN(nn.Module):
         # Dropout for regularization
         self.dropout = nn.Dropout(dropout_rate)
 
-        # Linear layer to map residual to the hidden_dim
+        # Linear layer to map residual input size (num_node_features) to hidden_dim
         self.residual_transform = nn.Linear(num_node_features, hidden_dim)
-
-        # Final linear layer to map back to original feature size
-        self.out_layer = nn.Linear(hidden_dim, num_node_features)
 
     def forward(self, x, edge_index, edge_weight=None):
         # Apply the transformation to the input x for residual connection
-        residual = self.residual_transform(x)
+        residual = self.residual_transform(x)  # Transform to hidden_dim size
 
         for conv, bn in zip(self.convs[:-1], self.bns[:-1]):
             x = conv(x, edge_index, edge_weight)
@@ -55,10 +52,10 @@ class ImprovedGCN(nn.Module):
         x = self.convs[-1](x, edge_index, edge_weight)
         x = self.bns[-1](x)
 
-        # Project back to the original feature size
-        x = self.out_layer(x)
+        # Return the embeddings of size `hidden_dim`
+        return x
 
-        return x  # Return embeddings of the same size as the original input features
+
 
 def load_features(pickle_file):
     with open(pickle_file, 'rb') as f:
@@ -222,26 +219,25 @@ def process_gcn(pickle_file, csv_file, entity_col1, entity_col2, output_file, th
     embeddings_dict = {node: embeddings[i].detach().cpu().numpy() for i, node in enumerate(clean_features.keys())}
     save_embeddings(embeddings_dict, output_file)
 
-# Example usage
 if __name__ == "__main__":
     # Process drug GCN
     process_gcn(
         pickle_file='/home/o.soufan/DMGNNs/simgraphmaker/features.pkl',
-        csv_file='/home/o.soufan/DMGNNs/Data/SimilarityGraphs/drug_similarity.csv',
+        csv_file='/home/o.soufan/DMGNNs/Data/SimilarityGraphs/drug_similarity_3.csv',
         entity_col1='drug1',
         entity_col2='drug2',
-        output_file='drug_embeddings_3.pkl',
-        threshold=0.09857327094420833, # using a percentile threshold
+        output_file='drug_embeddings_prot.pkl',
+        threshold=0.09491138750452857, # using a percentile threshold
         feature_type='drug_features'
     )
 
     # Process protein GCN
     process_gcn(
-        pickle_file='/home/o.soufan/DMGNNs/simgraphmaker/features.pkl',
-        csv_file='/home/o.soufan/DMGNNs/Data/SimilarityGraphs/protein_similarity.csv',
+        pickle_file='/home/o.soufan/DMGNNs/simgraphmaker/features_prot.pkl',
+        csv_file='/home/o.soufan/DMGNNs/Data/SimilarityGraphs/protein_similarity_prot_features.csv',
         entity_col1='protein1',
         entity_col2='protein2',
-        output_file='protein_embeddings_3.pkl',
-        threshold=0.4916331202901155, # using a percentile threshold
+        output_file='protein_embeddings_prot.pkl',
+        threshold=0.7841464260052041, # using a percentile threshold
         feature_type='protein_features'
     )

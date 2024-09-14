@@ -133,11 +133,11 @@ class FeatureSimilarityComputer:
 
     def generate_features(self, file_path, subset_size=100, features_pickle='features.pkl', use_sequence_features=False):
         """Generate and store features for chemicals and proteins."""
-        if os.path.exists(features_pickle):
-            with open(features_pickle, 'rb') as f:
+        if os.path.exists("features.pkl"):
+            with open("features.pkl", 'rb') as f:
                 saved_features = pickle.load(f)
             drug_features = saved_features.get('drug_features', {})
-            protein_features = saved_features.get('protein_features', {})
+            protein_features = {}#saved_features.get('protein_features', {})
             print(f"Loaded previously generated features from {features_pickle}")
         else:
             drug_features = {}
@@ -162,7 +162,7 @@ class FeatureSimilarityComputer:
                 mol = self.to_mol(protein, is_protein=True, use_sequence_features=use_sequence_features)
                 if mol is not None:
                     if use_sequence_features:
-                        protein_features[protein] = (None, mol)
+                        protein_features[protein] = mol#(None, mol)
                     else:
                         features = self.generate_combined_features(mol)
                         if features is not None:
@@ -174,17 +174,17 @@ class FeatureSimilarityComputer:
             pickle.dump({'drug_features': drug_features, 'protein_features': protein_features}, f)
         print(f"Saved generated features to {features_pickle}")
 
-        drug_similarities = self.compute_random_similarity(drug_features, subset_size)
+        drug_similarities = ""#self.compute_random_similarity(drug_features, subset_size)
         protein_similarities = self.compute_random_similarity(protein_features, subset_size)
 
         return drug_similarities, protein_similarities
 
     def generate_similarity_files(self, drug_similarities, protein_similarities, drug_output_file, protein_output_file):
         """Save similarities to files."""
-        with open(drug_output_file, 'w') as f:
-            f.write('drug1,drug2,similarity_score\n')
-            for (drug1, drug2), similarity in drug_similarities.items():
-                f.write(f'{drug1},{drug2},{similarity}\n')
+        # with open(drug_output_file, 'w') as f:
+        #     f.write('drug1,drug2,similarity_score\n')
+        #     for (drug1, drug2), similarity in drug_similarities.items():
+        #         f.write(f'{drug1},{drug2},{similarity}\n')
 
         with open(protein_output_file, 'w') as f:
             f.write('protein1,protein2,similarity_score\n')
