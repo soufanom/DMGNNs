@@ -1,8 +1,8 @@
 import torch
 import torch.nn as nn
 import torch.optim as optim
-# from torch_geometric.data import Data
-# from torch_geometric.nn import GATConv
+from torch_geometric.data import Data
+from torch_geometric.nn import GATConv
 import torch.nn.functional as F
 import pickle
 import pandas as pd
@@ -15,17 +15,17 @@ class ImprovedGCN(nn.Module):
         self.convs = nn.ModuleList()
         self.bns = nn.ModuleList()  # Batch normalization layers
 
-        # # First GCN layer
-        # self.convs.append(GATConv(num_node_features, hidden_dim))
+        # First GCN layer
+        self.convs.append(GATConv(num_node_features, hidden_dim))
         self.bns.append(nn.BatchNorm1d(hidden_dim))
 
         # Hidden GCN layers with residual connections
         for _ in range(num_layers - 2):
-            # self.convs.append(GATConv(hidden_dim, hidden_dim))
+            self.convs.append(GATConv(hidden_dim, hidden_dim))
             self.bns.append(nn.BatchNorm1d(hidden_dim))
 
         # Last GCN layer
-        # self.convs.append(GATConv(hidden_dim, hidden_dim))
+        self.convs.append(GATConv(hidden_dim, hidden_dim))
         self.bns.append(nn.BatchNorm1d(hidden_dim))
 
         # Dropout for regularization
@@ -91,32 +91,32 @@ def load_similarity_data(csv_file, threshold):
 
 
 def build_graph(data, features_dict, entity_col1, entity_col2, feature_size):
-    """
-    Build the graph for contrastive loss. The edge weights are binary, with 1 indicating a similar pair
-    and 0 indicating a dissimilar pair.
-    """
     nodes = list(features_dict.keys())
     node_mapping = {entity: i for i, entity in enumerate(nodes)}
 
     edge_index = []
-    edge_labels = []  # 1 for similar, 0 for dissimilar
+    edge_weight = []  # This will be binary: 1 for similar pairs, 0 for dissimilar pairs
 
     for _, row in data.iterrows():
         entity1 = row[entity_col1]
         entity2 = row[entity_col2]
         similarity_score = row['similarity_score']
 
+        # Here, we assume the similarity_score is already binary (1 for similar, 0 for dissimilar)
         if entity1 in node_mapping and entity2 in node_mapping:
             i, j = node_mapping[entity1], node_mapping[entity2]
             edge_index.append([i, j])
             edge_index.append([j, i])  # Ensure the graph is undirected (i -> j and j -> i)
 
-            # The similarity score (1 for similar, 0 for dissimilar) is used as the edge label
-            edge_labels.append(similarity_score)
-            edge_labels.append(similarity_score)  # Duplicate for the reverse edge
+            # Append binary similarity score as edge weight
+            edge_weight.append(similarity_score)  # 1 for similar, 0 for dissimilar
+            edge_weight.append(similarity_score)  # Duplicate for the reverse edge
 
+    # Convert edge_index to a tensor
     edge_index = torch.tensor(edge_index, dtype=torch.long).t().contiguous()
-    edge_labels = torch.tensor(edge_labels, dtype=torch.float)
+
+    # Convert edge weights to a tensor (binary)
+    edge_weight = torch.tensor(edge_weight, dtype=torch.float)
 
     # Node feature normalization (Min-Max scaling)
     node_features_np = np.array([features_dict[node] for node in nodes])
@@ -124,9 +124,7 @@ def build_graph(data, features_dict, entity_col1, entity_col2, feature_size):
     node_features_scaled = node_scaler.fit_transform(node_features_np)
     node_features = torch.tensor(node_features_scaled, dtype=torch.float)
 
-    # Return graph data and edge labels (for contrastive loss)
-    #return Data(x=node_features, edge_index=edge_index), edge_labels
-    return 1, 1
+    return Data(x=node_features, edge_index=edge_index, edge_attr=edge_weight)
 
 # Define contrastive loss function
 def contrastive_loss(embeddings_i, embeddings_j, label, margin=1.0):
@@ -232,20 +230,20 @@ def process_gcn(pickle_file, csv_file, entity_col1, entity_col2, output_file, th
 
 if __name__ == "__main__":
     # Process drug GCN
-    # process_gcn(
-    #     pickle_file='/home/o.soufan/DMGNNs/simgraphmaker/features.pkl',
-    #     csv_file='/home/o.soufan/DMGNNs/Data/SimilarityGraphs/drug_similarity_3.csv',
-    #     entity_col1='drug1',
-    #     entity_col2='drug2',
-    #     output_file='drug_embeddings_prot.pkl',
-    #     threshold=0.09491138750452857, # using a percentile threshold
-    #     feature_type='drug_features'
-    # )
+    process_gcn(
+        pickle_file='/home/o.soufan/DMGNNs/simgraphmaker/features.pkl',
+        csv_file='/home/o.soufan/DMGNNs/Data/SimilarityGraphs/drug_similarity_3.csv',
+        entity_col1='drug1',
+        entity_col2='drug2',
+        output_file='drug_embeddings_prot.pkl',
+        threshold=0.09491138750452857, # using a percentile threshold
+        feature_type='drug_features'
+    )
 
     # Process protein GCN
     process_gcn(
-        pickle_file='../simgraphmaker/features_prot.pkl',
-        csv_file='../Data/SimilarityGraphs/protein_similarity_prot_features.csv',
+        pickle_file='/home/o.soufan/DMGNNs/simgraphmaker/features_prot.pkl',
+        csv_file='/home/o.soufan/DMGNNs/Data/SimilarityGraphs/protein_similarity_prot_features.csv',
         entity_col1='protein1',
         entity_col2='protein2',
         output_file='protein_embeddings_prot.pkl',
