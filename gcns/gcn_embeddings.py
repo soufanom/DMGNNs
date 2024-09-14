@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch_geometric.data import Data
-from torch_geometric.nn import GCNConv
+from torch_geometric.nn import GATConv
 import torch.nn.functional as F
 import pickle
 import pandas as pd
@@ -10,22 +10,22 @@ import numpy as np
 from sklearn.preprocessing import MinMaxScaler
 
 class ImprovedGCN(nn.Module):
-    def __init__(self, num_node_features, hidden_dim=128, num_layers=4, dropout_rate=0.3):
+    def __init__(self, num_node_features, hidden_dim=128, num_layers=6, dropout_rate=0.3):
         super(ImprovedGCN, self).__init__()
         self.convs = nn.ModuleList()
         self.bns = nn.ModuleList()  # Batch normalization layers
 
         # First GCN layer
-        self.convs.append(GCNConv(num_node_features, hidden_dim))
+        self.convs.append(GATConv(num_node_features, hidden_dim))
         self.bns.append(nn.BatchNorm1d(hidden_dim))
 
         # Hidden GCN layers with residual connections
         for _ in range(num_layers - 2):
-            self.convs.append(GCNConv(hidden_dim, hidden_dim))
+            self.convs.append(GATConv(hidden_dim, hidden_dim))
             self.bns.append(nn.BatchNorm1d(hidden_dim))
 
         # Last GCN layer
-        self.convs.append(GCNConv(hidden_dim, hidden_dim))
+        self.convs.append(GATConv(hidden_dim, hidden_dim))
         self.bns.append(nn.BatchNorm1d(hidden_dim))
 
         # Dropout for regularization

@@ -70,7 +70,7 @@ def calculate_threshold(similarity_scores, method='percentile', percentile=90):
 
 # Example usage
 if __name__ == "__main__":
-    file_path = '../Data/SimilarityGraphs/drug_similarity_3.csv'  # Replace with the path to your input file
+    file_path = '../Data/SimilarityGraphs/drug_similarity.csv'  # Replace with the path to your input file
     threshold_method = 'mean_std'  # Choose between 'percentile' and 'mean_std'
     percentile = 90  # Relevant if 'percentile' method is chosen
 
