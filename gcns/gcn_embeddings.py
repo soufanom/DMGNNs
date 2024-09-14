@@ -1,8 +1,8 @@
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from torch_geometric.data import Data
-from torch_geometric.nn import GATConv
+# from torch_geometric.data import Data
+# from torch_geometric.nn import GATConv
 import torch.nn.functional as F
 import pickle
 import pandas as pd
@@ -15,17 +15,17 @@ class ImprovedGCN(nn.Module):
         self.convs = nn.ModuleList()
         self.bns = nn.ModuleList()  # Batch normalization layers
 
-        # First GCN layer
-        self.convs.append(GATConv(num_node_features, hidden_dim))
+        # # First GCN layer
+        # self.convs.append(GATConv(num_node_features, hidden_dim))
         self.bns.append(nn.BatchNorm1d(hidden_dim))
 
         # Hidden GCN layers with residual connections
         for _ in range(num_layers - 2):
-            self.convs.append(GATConv(hidden_dim, hidden_dim))
+            # self.convs.append(GATConv(hidden_dim, hidden_dim))
             self.bns.append(nn.BatchNorm1d(hidden_dim))
 
         # Last GCN layer
-        self.convs.append(GATConv(hidden_dim, hidden_dim))
+        # self.convs.append(GATConv(hidden_dim, hidden_dim))
         self.bns.append(nn.BatchNorm1d(hidden_dim))
 
         # Dropout for regularization
@@ -85,8 +85,8 @@ def load_similarity_data(csv_file, threshold):
     df = pd.read_csv(csv_file)
     df = df.dropna()
     df2 = df.copy()
-    df[df2['similarity_score'] >= threshold] = 1
-    df[df2['similarity_score'] < threshold] = 0
+    df.loc[df2['similarity_score'] >= threshold, 'similarity_score'] = 1
+    df.loc[df2['similarity_score'] < threshold, 'similarity_score'] = 0
     return df
 
 
@@ -125,7 +125,8 @@ def build_graph(data, features_dict, entity_col1, entity_col2, feature_size):
     node_features = torch.tensor(node_features_scaled, dtype=torch.float)
 
     # Return graph data and edge labels (for contrastive loss)
-    return Data(x=node_features, edge_index=edge_index), edge_labels
+    #return Data(x=node_features, edge_index=edge_index), edge_labels
+    return 1, 1
 
 # Define contrastive loss function
 def contrastive_loss(embeddings_i, embeddings_j, label, margin=1.0):
@@ -231,20 +232,20 @@ def process_gcn(pickle_file, csv_file, entity_col1, entity_col2, output_file, th
 
 if __name__ == "__main__":
     # Process drug GCN
-    process_gcn(
-        pickle_file='/home/o.soufan/DMGNNs/simgraphmaker/features.pkl',
-        csv_file='/home/o.soufan/DMGNNs/Data/SimilarityGraphs/drug_similarity_3.csv',
-        entity_col1='drug1',
-        entity_col2='drug2',
-        output_file='drug_embeddings_prot.pkl',
-        threshold=0.09491138750452857, # using a percentile threshold
-        feature_type='drug_features'
-    )
+    # process_gcn(
+    #     pickle_file='/home/o.soufan/DMGNNs/simgraphmaker/features.pkl',
+    #     csv_file='/home/o.soufan/DMGNNs/Data/SimilarityGraphs/drug_similarity_3.csv',
+    #     entity_col1='drug1',
+    #     entity_col2='drug2',
+    #     output_file='drug_embeddings_prot.pkl',
+    #     threshold=0.09491138750452857, # using a percentile threshold
+    #     feature_type='drug_features'
+    # )
 
     # Process protein GCN
     process_gcn(
-        pickle_file='/home/o.soufan/DMGNNs/simgraphmaker/features_prot.pkl',
-        csv_file='/home/o.soufan/DMGNNs/Data/SimilarityGraphs/protein_similarity_prot_features.csv',
+        pickle_file='../simgraphmaker/features_prot.pkl',
+        csv_file='../Data/SimilarityGraphs/protein_similarity_prot_features.csv',
         entity_col1='protein1',
         entity_col2='protein2',
         output_file='protein_embeddings_prot.pkl',
