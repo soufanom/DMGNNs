@@ -84,16 +84,22 @@ def preprocess_features(features):
 def load_similarity_data(csv_file, threshold):
     df = pd.read_csv(csv_file)
     df = df.dropna()
-    df = df[df['similarity_score'] > threshold]
+    df2 = df.copy()
+    df[df2['similarity_score'] >= threshold] = 1
+    df[df2['similarity_score'] < threshold] = 0
     return df
 
 
 def build_graph(data, features_dict, entity_col1, entity_col2, feature_size):
+    """
+    Build the graph for contrastive loss. The edge weights are binary, with 1 indicating a similar pair
+    and 0 indicating a dissimilar pair.
+    """
     nodes = list(features_dict.keys())
     node_mapping = {entity: i for i, entity in enumerate(nodes)}
 
     edge_index = []
-    edge_weight = []
+    edge_labels = []  # 1 for similar, 0 for dissimilar
 
     for _, row in data.iterrows():
         entity1 = row[entity_col1]
@@ -104,16 +110,13 @@ def build_graph(data, features_dict, entity_col1, entity_col2, feature_size):
             i, j = node_mapping[entity1], node_mapping[entity2]
             edge_index.append([i, j])
             edge_index.append([j, i])  # Ensure the graph is undirected (i -> j and j -> i)
-            edge_weight.append(similarity_score)
-            edge_weight.append(similarity_score)  # Duplicate for the reverse edge
+
+            # The similarity score (1 for similar, 0 for dissimilar) is used as the edge label
+            edge_labels.append(similarity_score)
+            edge_labels.append(similarity_score)  # Duplicate for the reverse edge
 
     edge_index = torch.tensor(edge_index, dtype=torch.long).t().contiguous()
-
-    # Apply min-max scaling to edge weights
-    edge_weight_np = np.array(edge_weight).reshape(-1, 1)
-    scaler = MinMaxScaler()
-    edge_weight_scaled = scaler.fit_transform(edge_weight_np).flatten()  # Scale edge weights between 0 and 1
-    edge_weight = torch.tensor(edge_weight_scaled, dtype=torch.float)
+    edge_labels = torch.tensor(edge_labels, dtype=torch.float)
 
     # Node feature normalization (Min-Max scaling)
     node_features_np = np.array([features_dict[node] for node in nodes])
@@ -121,7 +124,9 @@ def build_graph(data, features_dict, entity_col1, entity_col2, feature_size):
     node_features_scaled = node_scaler.fit_transform(node_features_np)
     node_features = torch.tensor(node_features_scaled, dtype=torch.float)
 
-    return Data(x=node_features, edge_index=edge_index, edge_attr=edge_weight)
+    # Return graph data and edge labels (for contrastive loss)
+    return Data(x=node_features, edge_index=edge_index), edge_labels
+
 
 def train_gcn(gcn, data, epochs=500, learning_rate=0.01, weight_decay=1e-5, print_every=10):
     # Optimizer with weight decay for regularization
