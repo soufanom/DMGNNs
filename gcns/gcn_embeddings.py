@@ -127,8 +127,16 @@ def build_graph(data, features_dict, entity_col1, entity_col2, feature_size):
     # Return graph data and edge labels (for contrastive loss)
     return Data(x=node_features, edge_index=edge_index), edge_labels
 
+# Define contrastive loss function
+def contrastive_loss(embeddings_i, embeddings_j, label, margin=1.0):
+    # Compute the Euclidean distance between the pairs
+    distances = F.pairwise_distance(embeddings_i, embeddings_j)
 
-def train_gcn(gcn, data, epochs=500, learning_rate=0.01, weight_decay=1e-5, print_every=10):
+    # Contrastive loss
+    loss = 0.5 * (label * distances ** 2 + (1 - label) * F.relu(margin - distances) ** 2)
+    return loss.mean()
+
+def train_gcn(gcn, data, epochs=500, learning_rate=0.01, weight_decay=1e-5, margin=1.0, print_every=10):
     # Optimizer with weight decay for regularization
     optimizer = optim.Adam(gcn.parameters(), lr=learning_rate, weight_decay=weight_decay)
 
@@ -149,14 +157,11 @@ def train_gcn(gcn, data, epochs=500, learning_rate=0.01, weight_decay=1e-5, prin
         embeddings_i = out[data.edge_index[0]]  # Embeddings of the first nodes in each edge
         embeddings_j = out[data.edge_index[1]]  # Embeddings of the second nodes in each edge
 
-        # Compute predicted similarity between node pairs (dot product of embeddings)
-        predicted_similarity = (embeddings_i * embeddings_j).sum(dim=1)
+        # Actual similarity labels (1 for similar, 0 for dissimilar)
+        actual_similarity = data.edge_attr  # These should be binary labels (1 or 0)
 
-        # Actual similarity from edge attributes (edge weights)
-        actual_similarity = data.edge_attr  # These are the ground truth similarity scores
-
-        # Compute the loss (difference between predicted and actual similarity scores)
-        loss = criterion(predicted_similarity, actual_similarity)
+        # Compute the contrastive loss
+        loss = contrastive_loss(embeddings_i, embeddings_j, actual_similarity, margin)
 
         # Backpropagation and optimization
         loss.backward()
