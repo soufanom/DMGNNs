@@ -34,6 +34,9 @@ class ImprovedGCN(nn.Module):
         # Linear layer to map residual input size (num_node_features) to hidden_dim
         self.residual_transform = nn.Linear(num_node_features, hidden_dim)
 
+        # Final linear layer to map back to original feature size
+        self.out_layer = nn.Linear(hidden_dim, num_node_features)
+
     def forward(self, x, edge_index, edge_weight=None):
         # Apply the transformation to the input x for residual connection
         residual = self.residual_transform(x)  # Transform to hidden_dim size
@@ -51,6 +54,9 @@ class ImprovedGCN(nn.Module):
         # Last GCN layer without activation
         x = self.convs[-1](x, edge_index, edge_weight)
         x = self.bns[-1](x)
+
+        # Project back to the original feature size
+        x = self.out_layer(x)
 
         # Return the embeddings of size `hidden_dim`
         return x
@@ -84,10 +90,29 @@ def preprocess_features(features):
 def load_similarity_data(csv_file, threshold):
     df = pd.read_csv(csv_file)
     df = df.dropna()
-    df2 = df.copy()
-    df.loc[df2['similarity_score'] >= threshold, 'similarity_score'] = 1
-    df.loc[df2['similarity_score'] < threshold, 'similarity_score'] = 0
+    df = df[df['similarity_score'] > threshold]
     return df
+    # df2 = df.copy()
+    # df.loc[df2['similarity_score'] >= threshold, 'similarity_score'] = 1
+    # df.loc[df2['similarity_score'] < threshold, 'similarity_score'] = 0
+    #
+    # # Separate the two classes
+    # df_1 = df[df['similarity_score'] == 1]
+    # df_0 = df[df['similarity_score'] == 0]
+    #
+    # # Get the number of samples in the minority class (label 1)
+    # num_minority_samples = len(df_1)
+    #
+    # # Randomly sample the same number of label 0
+    # df_0_sampled = df_0.sample(n=num_minority_samples, random_state=42)
+    #
+    # # Concatenate the sampled 0s with all the 1s
+    # df_balanced = pd.concat([df_1, df_0_sampled], axis=0)
+    #
+    # # Shuffle the dataframe
+    # df_balanced = df_balanced.sample(frac=1, random_state=42).reset_index(drop=True)
+
+    #return df_balanced
 
 
 def build_graph(data, features_dict, entity_col1, entity_col2, feature_size):

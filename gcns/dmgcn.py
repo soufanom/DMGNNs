@@ -3,8 +3,8 @@ import numpy as np
 import random
 import pandas as pd
 import pickle
-from torch_geometric.data import Data
-from torch_geometric.nn import GCNConv
+# from torch_geometric.data import Data
+# from torch_geometric.nn import GCNConv
 from torch import nn, optim
 from sklearn.metrics import precision_score, recall_score, f1_score, precision_recall_curve, auc, roc_auc_score
 from sklearn.model_selection import train_test_split
@@ -12,6 +12,7 @@ import torch.nn.functional as F
 from sklearn.preprocessing import MinMaxScaler
 from sklearn.decomposition import PCA
 from sklearn.impute import SimpleImputer
+from sklearn.ensemble import RandomForestClassifier
 
 # Function to set the seed for reproducibility
 def set_seed(seed):
@@ -35,12 +36,12 @@ class GCN(nn.Module):
         self.dropout = nn.Dropout(p=dropout_rate)  # Dropout layer
         
         # First GCN layer
-        self.convs.append(GCNConv(num_node_features, hidden_dims[0]))
+        # self.convs.append(GCNConv(num_node_features, hidden_dims[0]))
         self.bns.append(nn.BatchNorm1d(hidden_dims[0]))
 
         # Hidden GCN layers
         for i in range(1, len(hidden_dims)):
-            self.convs.append(GCNConv(hidden_dims[i-1], hidden_dims[i]))
+            # self.convs.append(GCNConv(hidden_dims[i-1], hidden_dims[i]))
             self.bns.append(nn.BatchNorm1d(hidden_dims[i]))
 
         # Fully connected layer
@@ -168,8 +169,55 @@ def build_graph(df, drug_features, protein_features, is_embedding=False):
     edge_weight_tensor = torch.tensor(edge_weight, dtype=torch.float)
     labels_tensor = torch.tensor(labels, dtype=torch.float)
 
-    return Data(x=node_features_tensor, edge_index=edge_index_tensor, edge_attr=edge_weight_tensor), labels_tensor
+    # return Data(x=node_features_tensor, edge_index=edge_index_tensor, edge_attr=edge_weight_tensor), labels_tensor
+    return 1,1
 
+# Function to prepare data for Random Forest
+def prepare_rf_data(df, drug_features, protein_features, is_embedding=False):
+    feature_vectors = []
+    labels = []
+
+    for _, row in df.iterrows():
+        chemical = row['chemical']
+        protein = row['protein']
+        label = row['label']
+
+        # Initialize features as None
+        chemical_features = None
+        protein_features_combined = None
+
+        if chemical in drug_features:
+            if is_embedding:
+                chemical_features = drug_features[chemical]  # Use embeddings directly
+            else:
+                ecfp, desc = drug_features[chemical]  # Original features need to be concatenated
+                chemical_features = np.concatenate((ecfp, desc))
+
+        if protein in protein_features:
+            if is_embedding:
+                protein_features_combined = protein_features[protein]  # Use embeddings directly
+            else:
+                ecfp, desc = protein_features[protein]  # Original features need to be concatenated
+                protein_features_combined = np.concatenate((ecfp, desc))
+
+        # Check and handle NaN values for both chemical and protein features
+        if chemical_features is not None and np.isnan(chemical_features).any():
+            print(f"Warning: NaN values found in features for chemical: {chemical}")
+            continue
+        if protein_features_combined is not None and np.isnan(protein_features_combined).any():
+            print(f"Warning: NaN values found in features for protein: {protein}")
+            continue
+
+        # Only add feature vector if both chemical and protein features are valid
+        if chemical_features is not None and protein_features_combined is not None:
+            feature_vector = np.concatenate((chemical_features, protein_features_combined))
+            feature_vectors.append(feature_vector)
+            labels.append(label)
+
+    feature_vectors = np.array(feature_vectors)
+    labels = np.array(labels)
+
+    return feature_vectors, labels
 
 # Function to handle NaN values by imputing the mean
 def handle_nan_values(matrix):
@@ -275,20 +323,51 @@ def evaluate_gcn(gcn, data, labels):
 
     return precision, recall, f1_score, auc_roc, aupr
 
+def report_rf_results(train_df, test_df, drug_features, protein_features, is_embedding=False):
+    # Prepare data for Random Forest with normalized features
+    train_rf_features, train_rf_labels = prepare_rf_data(train_df, drug_features,
+                                                         protein_features, is_embedding=is_embedding)
+    test_rf_features, test_rf_labels = prepare_rf_data(test_df, drug_features, protein_features,
+                                                       is_embedding=is_embedding)
+
+    # Train a Random Forest model
+    rf_model = RandomForestClassifier(n_estimators=500, random_state=42)
+    rf_model.fit(train_rf_features, train_rf_labels)
+
+    # Predict using the Random Forest model on test data
+    rf_predictions_prob = rf_model.predict_proba(test_rf_features)[:, 1]  # Get probabilities for the positive class
+    rf_predictions = rf_model.predict(test_rf_features)
+
+    # Evaluation metrics for Random Forest
+    rf_precision = precision_score(test_rf_labels, rf_predictions)
+    rf_recall = recall_score(test_rf_labels, rf_predictions)
+    rf_f1 = f1_score(test_rf_labels, rf_predictions)
+    rf_auc_roc = roc_auc_score(test_rf_labels, rf_predictions_prob)
+
+    # Precision-Recall Curve and AUPR calculation
+    rf_precision_curve, rf_recall_curve, _ = precision_recall_curve(test_rf_labels, rf_predictions_prob)
+    rf_aupr = auc(rf_recall_curve, rf_precision_curve)
+
+    # Print results
+    print(
+        f"Precision: {rf_precision:.4f}, Recall: {rf_recall:.4f}, F1 Score: {rf_f1:.4f}, AUC: {rf_auc_roc:.4f}, AUPR: {rf_aupr:.4f}")
+
 # Main script
 if __name__ == "__main__":
     # File paths
-    data_file = '/home/o.soufan/DMGNNs/Data/BindingDB-processed/bindingdb_ic50_data.txt'
-    drug_embedding_file = 'drug_embeddings_3.pkl'
-    protein_embedding_file = 'protein_embeddings_3.pkl'
-    feature_file = '/home/o.soufan/DMGNNs/simgraphmaker/features.pkl'
+    data_file = '../Data/BindingDB-processed/bindingdb_ic50_data.txt'
+    drug_embedding_file = 'drug_embeddings_stitch.pkl'
+    protein_embedding_file = 'protein_embeddings_stitch.pkl'
+    feature_file = '../simgraphmaker/features.pkl'
 
     # Shuffle and split the data
     train_df, test_df = shuffle_and_split_data(data_file)
 
+    external_test = pd.read_csv("../Data/StitchString/stitch-data.csv")
+
     # Load embeddings and original features
-    drug_embeddings = load_embeddings(drug_embedding_file)
-    protein_embeddings = load_embeddings(protein_embedding_file)
+    # drug_embeddings = load_embeddings(drug_embedding_file)
+    # protein_embeddings = load_embeddings(protein_embedding_file)
     drug_features, protein_features = load_original_features(feature_file)
 
     # Apply PCA to reduce original features to 128 dimensions for both ecfp and desc
@@ -296,106 +375,160 @@ if __name__ == "__main__":
     #protein_features = apply_pca_to_dict_separate(protein_features, n_components=105)
 
     # Determine the size of the node features
-    embedding_feature_size = next(iter(drug_embeddings.values())).shape[0]
-    original_feature_size = sum(map(lambda x: x.shape[0], next(iter(drug_features.values()))))
+    # embedding_feature_size = next(iter(drug_embeddings.values())).shape[0]
+    # original_feature_size = sum(map(lambda x: x.shape[0], next(iter(drug_features.values()))))
 
-    # Ensure that both GCNs have the same size of node features
-    assert embedding_feature_size == original_feature_size, "Node features must have the same size for both GCNs."
+    # # Ensure that both GCNs have the same size of node features
+    # assert embedding_feature_size == original_feature_size, "Node features must have the same size for both GCNs."
 
     # Normalize features
     drug_features_normalized = normalize_features(drug_features)
     protein_features_normalized = normalize_features(protein_features)
 
-    # Normalize embeddings
-    drug_embeddings_normalized = normalize_features(drug_embeddings)
-    protein_embeddings_normalized = normalize_features(protein_embeddings)
+    # # Normalize embeddings
+    # drug_embeddings_normalized = normalize_features(drug_embeddings)
+    # protein_embeddings_normalized = normalize_features(protein_embeddings)
 
-    # Build graphs using embeddings (no concatenation)
-    data_embeddings, labels_embeddings = build_graph(train_df, drug_embeddings, protein_embeddings, is_embedding=True)
+    # # Build graphs using embeddings (no concatenation)
+    # data_embeddings, labels_embeddings = build_graph(train_df, drug_embeddings, protein_embeddings, is_embedding=True)
 
-    # Build graphs using original features (with concatenation)
-    data_original, labels_original = build_graph(train_df, drug_features, protein_features, is_embedding=False)
+    # # Build graphs using original features (with concatenation)
+    # data_original, labels_original = build_graph(train_df, drug_features, protein_features, is_embedding=False)
+    #
+    # # Initialize GCN models
+    # seed = 42
+    # set_seed(seed)
+    # # gcn_embeddings = GCN(num_node_features=data_embeddings.x.size(1))
+    # gcn_original = GCN(num_node_features=data_original.x.size(1))
+    #
+    # # Train GCN models
+    # print("Training GCN with embeddings...")
+    # set_seed(seed)
+    # # gcn_embeddings = train_gcn(gcn_embeddings, data_embeddings, labels_embeddings)
+    #
+    # set_seed(seed)
+    # print("Training GCN with original features...")
+    # gcn_original = train_gcn(gcn_original, data_original, labels_original)
+    #
+    # # Evaluate GCN models on test data
+    # # print("Evaluating GCN with embeddings on test data...")
+    # # test_data_embeddings, test_labels_embeddings = build_graph(test_df, drug_embeddings, protein_embeddings,
+    # #                                                            is_embedding=True)
+    # # precision_emb, recall_emb, f1_emb, auc_emb, aupr_emb = evaluate_gcn(gcn_embeddings, test_data_embeddings,
+    # #                                                           test_labels_embeddings)
+    #
+    # # Evaluate GCN models on external test data
+    # # print("Evaluating GCN with embeddings on test data...")
+    # # externa_test_data_embeddings, external_test_labels_embeddings = build_graph(external_test, drug_embeddings, protein_embeddings,
+    # #                                                            is_embedding=True)
+    # # e_precision_emb, e_recall_emb, e_f1_emb, e_auc_emb, e_aupr_emb = evaluate_gcn(gcn_embeddings, externa_test_data_embeddings,
+    # #                                                           external_test_labels_embeddings)
+    #
+    # print("Evaluating GCN with original features on test data...")
+    # test_data_original, test_labels_original = build_graph(test_df, drug_features, protein_features, is_embedding=False)
+    # precision_orig, recall_orig, f1_orig, auc_orig, aupr_orig = evaluate_gcn(gcn_original, test_data_original,
+    #                                                               test_labels_original)
+    #
+    # print("Evaluating GCN with original features on external test data...")
+    # e_test_data_original, e_test_labels_original = build_graph(external_test, drug_features, protein_features, is_embedding=False)
+    # e_precision_orig, e_recall_orig, e_f1_orig, e_auc_orig, e_aupr_orig = evaluate_gcn(gcn_original, e_test_data_original,
+    #                                                               e_test_labels_original)
+    #
+    # # Build graphs using normalized original features
+    # data_normalized_original, labels_normalized_original = build_graph(train_df, drug_features_normalized,
+    #                                                                    protein_features_normalized, is_embedding=True)
+    # #
+    # # # Build graphs using normalized embeddings
+    # # data_normalized_embeddings, labels_normalized_embeddings = build_graph(train_df, drug_embeddings_normalized,
+    # #                                                                        protein_embeddings_normalized,
+    # #                                                                        is_embedding=True)
+    #
+    # # Initialize GCN models for normalized data
+    # set_seed(seed)
+    # # gcn_norm_embedded = GCN(num_node_features=data_normalized_embeddings.x.size(1))
+    # gcn_norm_original = GCN(num_node_features=data_normalized_original.x.size(1))
+    #
+    # # Train GCN models on normalized data
+    # print("Training GCN with normalized embeddings...")
+    # set_seed(seed)
+    # # gcn_norm_embedded = train_gcn(gcn_norm_embedded, data_normalized_embeddings, labels_normalized_embeddings)
+    #
+    # print("Training GCN with normalized original features...")
+    set_seed(42)
+    # gcn_norm_original = train_gcn(gcn_norm_original, data_normalized_original, labels_normalized_original)
+    #
+    # # # Evaluate GCN models on test data with normalized features
+    # # print("Evaluating GCN with normalized embeddings on test data...")
+    # # test_data_normalized_embeddings, test_labels_normalized_embeddings = build_graph(test_df,
+    # #                                                                                  drug_embeddings_normalized,
+    # #                                                                                  protein_embeddings_normalized,
+    # #                                                                                  is_embedding=True)
+    # # precision_norm_emb, recall_norm_emb, f1_norm_emb, auc_norm_emb, aupr_norm_emb = evaluate_gcn(gcn_norm_embedded,
+    # #                                                                               test_data_normalized_embeddings,
+    # #                                                                               test_labels_normalized_embeddings)
+    #
+    # print("Evaluating GCN with normalized original features on test data...")
+    # test_data_normalized_original, test_labels_normalized_original = build_graph(test_df, drug_features_normalized,
+    #                                                                              protein_features_normalized,
+    #                                                                              is_embedding=True)
+    # precision_norm_orig, recall_norm_orig, f1_norm_orig, auc_norm_orig, aupr_norm_orig = evaluate_gcn(gcn_norm_original,
+    #                                                                                   test_data_normalized_original,
+    #                                                                                   test_labels_normalized_original)
+    #
+    # # Evaluate GCN models on test data with normalized features
+    # # print("Evaluating GCN with normalized embeddings on external test data...")
+    # # test_data_normalized_embeddings, test_labels_normalized_embeddings = build_graph(external_test,
+    # #                                                                                  drug_embeddings_normalized,
+    # #                                                                                  protein_embeddings_normalized,
+    # #                                                                                  is_embedding=True)
+    # # e_precision_norm_emb, e_recall_norm_emb, e_f1_norm_emb, e_auc_norm_emb, e_aupr_norm_emb = evaluate_gcn(gcn_norm_embedded,
+    # #                                                                               test_data_normalized_embeddings,
+    # #                                                                               test_labels_normalized_embeddings)
+    #
+    # print("Evaluating GCN with normalized original features on test data...")
+    # test_data_normalized_original, test_labels_normalized_original = build_graph(external_test, drug_features_normalized,
+    #                                                                              protein_features_normalized,
+    #                                                                              is_embedding=True)
+    # e_precision_norm_orig, e_recall_norm_orig, e_f1_norm_orig, e_auc_norm_orig, e_aupr_norm_orig = evaluate_gcn(gcn_norm_original,
+    #                                                                                   test_data_normalized_original,
+    #                                                                                   test_labels_normalized_original)
+    #
+    #
+    # # Print results
+    # # print("\nResults with Embeddings:")
+    # # print(f"Precision: {precision_emb:.4f}, Recall: {recall_emb:.4f}, F1 Score: {f1_emb:.4f}, AUC: {auc_emb:.4f}, AUPR: {aupr_emb:.4f}")
+    # #
+    # # print("\nResults with Embeddings on External:")
+    # # print(f"Precision: {e_precision_emb:.4f}, Recall: {e_recall_emb:.4f}, F1 Score: {e_f1_emb:.4f}, AUC: {e_auc_emb:.4f}, AUPR: {e_aupr_emb:.4f}")
+    #
+    # print("\nResults with Original Features:")
+    # print(f"Precision: {precision_orig:.4f}, Recall: {recall_orig:.4f}, F1 Score: {f1_orig:.4f}, AUC: {auc_orig:.4f}, AUPR: {aupr_orig:.4f}")
+    #
+    # print("\nResults with Original Features on External:")
+    # print(f"Precision: {e_precision_orig:.4f}, Recall: {e_recall_orig:.4f}, F1 Score: {e_f1_orig:.4f}, AUC: {e_auc_orig:.4f}, AUPR: {e_aupr_orig:.4f}")
+    #
+    # # print("\nResults with Normalized Embeddings:")
+    # # print(
+    # #     f"Precision: {precision_norm_emb:.4f}, Recall: {recall_norm_emb:.4f}, F1 Score: {f1_norm_emb:.4f}, AUC: {auc_norm_emb:.4f}, AUPR: {aupr_norm_emb:.4f}")
+    #
+    # # print("\nResults with Normalized Embeddings on External:")
+    # # print(
+    # #     f"Precision: {e_precision_norm_emb:.4f}, Recall: {e_recall_norm_emb:.4f}, F1 Score: {e_f1_norm_emb:.4f}, AUC: {e_auc_norm_emb:.4f}, AUPR: {e_aupr_norm_emb:.4f}")
+    #
+    # print("\nResults with Normalized Original Features:")
+    # print(
+    #     f"Precision: {precision_norm_orig:.4f}, Recall: {recall_norm_orig:.4f}, F1 Score: {f1_norm_orig:.4f}, AUC: {auc_norm_orig:.4f}, AUPR: {aupr_norm_orig:.4f}")
+    #
+    # print("\nResults with Normalized Original Features on Externaal:")
+    # print(
+    #     f"Precision: {e_precision_norm_orig:.4f}, Recall: {e_recall_norm_orig:.4f}, F1 Score: {e_f1_norm_orig:.4f}, AUC: {e_auc_norm_orig:.4f}, AUPR: {e_aupr_norm_orig:.4f}")
+    #
+    # print("\nResults with Original Features using RF:")
+    # report_rf_results(train_df, test_df, drug_features, protein_features)
+    # print("\nResults with Normalized Features using RF:")
+    # report_rf_results(train_df, test_df, drug_features_normalized, protein_features_normalized, True)
 
-    # Initialize GCN models
-    seed = 42
-    set_seed(seed)
-    gcn_embeddings = GCN(num_node_features=data_embeddings.x.size(1))
-    gcn_original = GCN(num_node_features=data_original.x.size(1))
-
-    # Train GCN models
-    print("Training GCN with embeddings...")
-    set_seed(seed)
-    gcn_embeddings = train_gcn(gcn_embeddings, data_embeddings, labels_embeddings)
-
-    set_seed(seed)
-    print("Training GCN with original features...")
-    gcn_original = train_gcn(gcn_original, data_original, labels_original)
-
-    # Evaluate GCN models on test data
-    print("Evaluating GCN with embeddings on test data...")
-    test_data_embeddings, test_labels_embeddings = build_graph(test_df, drug_embeddings, protein_embeddings,
-                                                               is_embedding=True)
-    precision_emb, recall_emb, f1_emb, auc_emb, aupr_emb = evaluate_gcn(gcn_embeddings, test_data_embeddings,
-                                                              test_labels_embeddings)
-
-    print("Evaluating GCN with original features on test data...")
-    test_data_original, test_labels_original = build_graph(test_df, drug_features, protein_features, is_embedding=False)
-    precision_orig, recall_orig, f1_orig, auc_orig, aupr_orig = evaluate_gcn(gcn_original, test_data_original,
-                                                                  test_labels_original)
-
-    # Build graphs using normalized original features
-    data_normalized_original, labels_normalized_original = build_graph(train_df, drug_features_normalized,
-                                                                       protein_features_normalized, is_embedding=True)
-
-    # Build graphs using normalized embeddings
-    data_normalized_embeddings, labels_normalized_embeddings = build_graph(train_df, drug_embeddings_normalized,
-                                                                           protein_embeddings_normalized,
-                                                                           is_embedding=True)
-
-    # Initialize GCN models for normalized data
-    set_seed(seed)
-    gcn_norm_embedded = GCN(num_node_features=data_normalized_embeddings.x.size(1))
-    gcn_norm_original = GCN(num_node_features=data_normalized_original.x.size(1))
-
-    # Train GCN models on normalized data
-    print("Training GCN with normalized embeddings...")
-    set_seed(seed)
-    gcn_norm_embedded = train_gcn(gcn_norm_embedded, data_normalized_embeddings, labels_normalized_embeddings)
-
-    print("Training GCN with normalized original features...")
-    set_seed(seed)
-    gcn_norm_original = train_gcn(gcn_norm_original, data_normalized_original, labels_normalized_original)
-
-    # Evaluate GCN models on test data with normalized features
-    print("Evaluating GCN with normalized embeddings on test data...")
-    test_data_normalized_embeddings, test_labels_normalized_embeddings = build_graph(test_df,
-                                                                                     drug_embeddings_normalized,
-                                                                                     protein_embeddings_normalized,
-                                                                                     is_embedding=True)
-    precision_norm_emb, recall_norm_emb, f1_norm_emb, auc_norm_emb, aupr_norm_emb = evaluate_gcn(gcn_norm_embedded,
-                                                                                  test_data_normalized_embeddings,
-                                                                                  test_labels_normalized_embeddings)
-
-    print("Evaluating GCN with normalized original features on test data...")
-    test_data_normalized_original, test_labels_normalized_original = build_graph(test_df, drug_features_normalized,
-                                                                                 protein_features_normalized,
-                                                                                 is_embedding=True)
-    precision_norm_orig, recall_norm_orig, f1_norm_orig, auc_norm_orig, aupr_norm_orig = evaluate_gcn(gcn_norm_original,
-                                                                                      test_data_normalized_original,
-                                                                                      test_labels_normalized_original)
-
-    # Print results
-    print("\nResults with Embeddings:")
-    print(f"Precision: {precision_emb:.4f}, Recall: {recall_emb:.4f}, F1 Score: {f1_emb:.4f}, AUC: {auc_emb:.4f}, AUPR: {aupr_emb:.4f}")
-
-    print("\nResults with Original Features:")
-    print(f"Precision: {precision_orig:.4f}, Recall: {recall_orig:.4f}, F1 Score: {f1_orig:.4f}, AUC: {auc_orig:.4f}, AUPR: {aupr_orig:.4f}")
-
-    print("\nResults with Normalized Embeddings:")
-    print(
-        f"Precision: {precision_norm_emb:.4f}, Recall: {recall_norm_emb:.4f}, F1 Score: {f1_norm_emb:.4f}, AUC: {auc_norm_emb:.4f}, AUPR: {aupr_norm_emb:.4f}")
-
-    print("\nResults with Normalized Original Features:")
-    print(
-        f"Precision: {precision_norm_orig:.4f}, Recall: {recall_norm_orig:.4f}, F1 Score: {f1_norm_orig:.4f}, AUC: {auc_norm_orig:.4f}, AUPR: {aupr_norm_orig:.4f}")
-
+    print("\nResults with Original Features on External Dataset using RF:")
+    report_rf_results(train_df, external_test, drug_features, protein_features)
+    print("\nResults with Normalized Features on External Dataset using RF:")
+    report_rf_results(train_df, external_test, drug_features_normalized, protein_features_normalized, True)

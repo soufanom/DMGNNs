@@ -204,9 +204,9 @@ def generate_similarity_files(drug_similarities, protein_similarities, drug_outp
 
 # Example usage
 if __name__ == "__main__":
-    input_path = "../Data/BindingDB-processed/"
-    file_path = input_path+'bindingdb_ic50_data.txt'  # Replace with the path to your input file
-    subset_size = 200  # Number of random molecules to compare against
+    input_path = "../Data/StitchString/"
+    file_path = input_path+'stitch-data.csv'  # Replace with the path to your input file
+    subset_size = 100  # Number of random molecules to compare against
     features_pickle = 'features.pkl'
 
     # Generate features and compute similarities
@@ -214,8 +214,8 @@ if __name__ == "__main__":
 
     # Save the similarities to files
     output_path = "../Data/SimilarityGraphs/"
-    drug_output_file = output_path + 'drug_similarity_3.csv'
-    protein_output_file = output_path +'protein_similarity_3.csv'
+    drug_output_file = output_path + 'drug_similarity.csv'
+    protein_output_file = output_path +'protein_similarity.csv'
     generate_similarity_files(drug_similarities, protein_similarities, drug_output_file, protein_output_file)
 
     print("Similarity computation and file generation completed.")

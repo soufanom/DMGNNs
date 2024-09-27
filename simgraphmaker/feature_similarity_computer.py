@@ -115,29 +115,73 @@ class FeatureSimilarityComputer:
             print(f"Error in computing similarity: {e}")
             return None
 
-    def compute_random_similarity(self, features_dict, subset_size=100):
-        """Compute random similarities between feature sets."""
+    def load_existing_similarities(self, file_path):
+        """Load existing similarities from a file if it exists."""
+        if os.path.exists(file_path):
+            similarities = {}
+            with open(file_path, 'r') as f:
+                next(f)  # Skip header
+                for line in f:
+                    entity1, entity2, similarity = line.strip().split(',')
+                    similarities[(entity1, entity2)] = float(similarity)
+            print(f"Loaded existing similarities from {file_path}")
+            return similarities
+        return {}
+
+    def append_similarities_to_file(self, new_similarities, output_file):
+        """Append new similarities to the output file."""
+        with open(output_file, 'a') as f:
+            for (entity1, entity2), similarity in new_similarities.items():
+                f.write(f'{entity1},{entity2},{similarity}\n')
+        print(f"Appended new similarities to {output_file}")
+
+    def compute_random_similarity(self, features_dict, subset_size=100, existing_similarities=None, output_file=None):
+        """Compute random similarities between feature sets, considering existing pairs."""
         keys = list(features_dict.keys())
-        similarities = {}
+        similarities = existing_similarities if existing_similarities else {}
+
+        new_similarities = {}
+
         for key in keys:
             random_subset = random.sample(keys, min(subset_size, len(keys)))
             for other_key in random_subset:
-                if key != other_key:
+                if key != other_key and (key, other_key) not in similarities and (other_key, key) not in similarities:
                     similarity = self.compute_combined_similarity(features_dict[key], features_dict[other_key])
                     if similarity is not None:
+                        new_similarities[(key, other_key)] = similarity
                         similarities[(key, other_key)] = similarity
                     else:
                         print(f"Skipping similarity computation between {key} and {other_key} due to an error.")
             print(f"Computed similarities for {key}")
+
+        if output_file:
+            self.append_similarities_to_file(new_similarities, output_file)
+
         return similarities
 
-    def generate_features(self, file_path, subset_size=100, features_pickle='features.pkl', use_sequence_features=False):
+    # def compute_random_similarity(self, features_dict, subset_size=100):
+    #     """Compute random similarities between feature sets."""
+    #     keys = list(features_dict.keys())
+    #     similarities = {}
+    #     for key in keys:
+    #         random_subset = random.sample(keys, min(subset_size, len(keys)))
+    #         for other_key in random_subset:
+    #             if key != other_key:
+    #                 similarity = self.compute_combined_similarity(features_dict[key], features_dict[other_key])
+    #                 if similarity is not None:
+    #                     similarities[(key, other_key)] = similarity
+    #                 else:
+    #                     print(f"Skipping similarity computation between {key} and {other_key} due to an error.")
+    #         print(f"Computed similarities for {key}")
+    #     return similarities
+
+    def generate_features(self, file_path, drug_output_file, protein_output_file, subset_size=100, features_pickle='features.pkl', use_sequence_features=False):
         """Generate and store features for chemicals and proteins."""
-        if os.path.exists("features.pkl"):
-            with open("features.pkl", 'rb') as f:
+        if os.path.exists(features_pickle):
+            with open(features_pickle, 'rb') as f:
                 saved_features = pickle.load(f)
             drug_features = saved_features.get('drug_features', {})
-            protein_features = {}#saved_features.get('protein_features', {})
+            protein_features = saved_features.get('protein_features', {})
             print(f"Loaded previously generated features from {features_pickle}")
         else:
             drug_features = {}
@@ -174,17 +218,37 @@ class FeatureSimilarityComputer:
             pickle.dump({'drug_features': drug_features, 'protein_features': protein_features}, f)
         print(f"Saved generated features to {features_pickle}")
 
-        drug_similarities = ""#self.compute_random_similarity(drug_features, subset_size)
-        protein_similarities = self.compute_random_similarity(protein_features, subset_size)
+        # Call the new compute_similarities function
+        drug_similarities, protein_similarities = self.compute_similarities(drug_features, protein_features,
+                                                                            subset_size, drug_output_file, protein_output_file)
 
         return drug_similarities, protein_similarities
 
+    def compute_similarities(self, drug_features, protein_features, subset_size, drug_output_file, protein_output_file):
+        """Compute drug and protein similarities, considering existing output files."""
+
+        # Load existing drug similarities if file exists
+        drug_similarities = self.load_existing_similarities(drug_output_file)
+
+        # Load existing protein similarities if file exists
+        protein_similarities = self.load_existing_similarities(protein_output_file)
+
+        # Compute new drug similarities and append to file
+        new_drug_similarities = self.compute_random_similarity(drug_features, subset_size, drug_similarities,
+                                                               drug_output_file)
+
+        # Compute new protein similarities and append to file
+        new_protein_similarities = self.compute_random_similarity(protein_features, subset_size, protein_similarities,
+                                                                  protein_output_file)
+
+        return new_drug_similarities, new_protein_similarities
+
     def generate_similarity_files(self, drug_similarities, protein_similarities, drug_output_file, protein_output_file):
         """Save similarities to files."""
-        # with open(drug_output_file, 'w') as f:
-        #     f.write('drug1,drug2,similarity_score\n')
-        #     for (drug1, drug2), similarity in drug_similarities.items():
-        #         f.write(f'{drug1},{drug2},{similarity}\n')
+        with open(drug_output_file, 'w') as f:
+            f.write('drug1,drug2,similarity_score\n')
+            for (drug1, drug2), similarity in drug_similarities.items():
+                f.write(f'{drug1},{drug2},{similarity}\n')
 
         with open(protein_output_file, 'w') as f:
             f.write('protein1,protein2,similarity_score\n')
